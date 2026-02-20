@@ -28,20 +28,20 @@ When comparing messy data to a dictionary, even a single trailing space or a sli
 # NOTE: This chunk is for display only. The complete function is at the bottom.
 
 replace_synonyms <- function(data,
-                             column_name,                 # The column in 'data' you want to check/modify
+                             column_name,            # The column in 'data' you want to check/modify
                              type = c("entry", "alias", "metadata"), # The mode of operation
-                             synonyms = NULL,             # Optional pre-loaded synonym dataframe
+                             synonyms = NULL,        # Optional pre-loaded synonym dataframe
                              synonyms_path = "./Name Synonym List.csv",
-                             metadata = NULL,             # Optional pre-loaded metadata dataframe
+                             metadata = NULL,        # Optional pre-loaded metadata dataframe
                              metadata_path = "./NameLocationHistoryKey.csv",
-                             metadata_col = NULL,         # Which column from the metadata file to retrieve
-                             collapse_metadata = NA,      # How to handle multiple matches (NA takes the first match)
-                             mode = NULL,                 # "replace" (overwrite) or "add" (new column)
+                             metadata_col = NULL,    # Which column from the metadata file to retrieve
+                             collapse_metadata = NA, # How to handle multiple matches (NA takes the first match)
+                             mode = NULL,            # "replace" (overwrite) or "add" (new column)
                              na.strings = c("NA", "#NA", "#N/A", "", "<NA>", NA),
-                             ignore_case = TRUE,          # Standardize text to lowercase for matching
-                             trim_ws = TRUE,              # Remove leading/trailing spaces for matching
-                             verbose = TRUE,              # Print summary stats to console
-                             output = NULL) {             # Optional file path (e.g. "unmatched.tsv") to save unmatched values
+                             ignore_case = TRUE,     # Standardize text to lowercase for matching
+                             trim_ws = TRUE,         # Remove leading/trailing spaces for matching
+                             verbose = TRUE,         # Print summary stats to console
+                             output = NULL) {        # Optional file path (e.g. "unmatched.tsv") to save unmatched values
   type <- match.arg(type)
   
   # Set logical defaults based on what the user is trying to do.
@@ -74,7 +74,7 @@ replace_synonyms <- function(data,
 
   
 
-2. Building the Dictionary
+## 2. Building the Dictionary
 
 Before looking at the user's dataframe, the script must build a lookup table (a dictionary) from the provided CSV files.
 
@@ -136,7 +136,7 @@ It also includes an internal check to ensure that one "bad name" does not accide
 
 
 
-3. Processing the Data and Generating Output
+## 3. Processing the Data and Generating Output
 
 Once the dictionary is built, the script scans the user's specific dataframe column.
 
@@ -179,7 +179,7 @@ Finally, if the user provided a file path in the output argument, the script wil
 
 
 
-4. The Complete Executable Function
+## 4. The Complete Executable Function
 
 Run the chunk below to load the complete replace_synonyms function into your R environment.
 
