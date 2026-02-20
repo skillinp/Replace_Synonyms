@@ -373,6 +373,11 @@ display: none;
 <li><a href="#introduction" id="toc-introduction">Introduction</a></li>
 <li><a href="#function-setup-and-text-normalization" id="toc-function-setup-and-text-normalization">1. Function Setup and
 Text Normalization</a></li>
+<li><a href="#building-the-dictionary" id="toc-building-the-dictionary">2. Building the Dictionary</a></li>
+<li><a href="#processing-the-data-and-generating-output" id="toc-processing-the-data-and-generating-output">3. Processing the
+Data and Generating Output</a></li>
+<li><a href="#the-complete-executable-function" id="toc-the-complete-executable-function">4. The Complete Executable
+Function</a></li>
 </ul>
 </div>
 
@@ -405,20 +410,20 @@ lowercase before it tries to find a match.</p>
 <pre class="r"><code># NOTE: This chunk is for display only. The complete function is at the bottom.
 
 replace_synonyms &lt;- function(data,
-                             column_name,                 # The column in &#39;data&#39; you want to check/modify
+                             column_name,            # The column in &#39;data&#39; you want to check/modify
                              type = c(&quot;entry&quot;, &quot;alias&quot;, &quot;metadata&quot;), # The mode of operation
-                             synonyms = NULL,             # Optional pre-loaded synonym dataframe
+                             synonyms = NULL,        # Optional pre-loaded synonym dataframe
                              synonyms_path = &quot;./Name Synonym List.csv&quot;,
-                             metadata = NULL,             # Optional pre-loaded metadata dataframe
+                             metadata = NULL,        # Optional pre-loaded metadata dataframe
                              metadata_path = &quot;./NameLocationHistoryKey.csv&quot;,
-                             metadata_col = NULL,         # Which column from the metadata file to retrieve
-                             collapse_metadata = NA,      # How to handle multiple matches (NA takes the first match)
-                             mode = NULL,                 # &quot;replace&quot; (overwrite) or &quot;add&quot; (new column)
+                             metadata_col = NULL,    # Which column from the metadata file to retrieve
+                             collapse_metadata = NA, # How to handle multiple matches (NA takes the first match)
+                             mode = NULL,            # &quot;replace&quot; (overwrite) or &quot;add&quot; (new column)
                              na.strings = c(&quot;NA&quot;, &quot;#NA&quot;, &quot;#N/A&quot;, &quot;&quot;, &quot;&lt;NA&gt;&quot;, NA),
-                             ignore_case = TRUE,          # Standardize text to lowercase for matching
-                             trim_ws = TRUE,              # Remove leading/trailing spaces for matching
-                             verbose = TRUE,              # Print summary stats to console
-                             output = NULL) {             # Optional file path (e.g. &quot;unmatched.tsv&quot;) to save unmatched values
+                             ignore_case = TRUE,     # Standardize text to lowercase for matching
+                             trim_ws = TRUE,         # Remove leading/trailing spaces for matching
+                             verbose = TRUE,         # Print summary stats to console
+                             output = NULL) {        # Optional file path (e.g. &quot;unmatched.tsv&quot;) to save unmatched values
   type &lt;- match.arg(type)
   
   # Set logical defaults based on what the user is trying to do.
@@ -446,9 +451,9 @@ replace_synonyms &lt;- function(data,
     if (ignore_case) x &lt;- tolower(x)
     x
   }</code></pre>
-<ol start="2" style="list-style-type: decimal">
-<li>Building the Dictionary</li>
-</ol>
+</div>
+<div id="building-the-dictionary" class="section level2">
+<h2>2. Building the Dictionary</h2>
 <p>Before looking at the user’s dataframe, the script must build a
 lookup table (a dictionary) from the provided CSV files.</p>
 <p>Speed Optimization: Instead of processing the CSV files cell-by-cell
@@ -506,9 +511,9 @@ not accidentally point to two completely different “good names”.</p>
     }, FUN.VALUE = character(1))
     
   }</code></pre>
-<ol start="3" style="list-style-type: decimal">
-<li>Processing the Data and Generating Output</li>
-</ol>
+</div>
+<div id="processing-the-data-and-generating-output" class="section level2">
+<h2>3. Processing the Data and Generating Output</h2>
 <p>Once the dictionary is built, the script scans the user’s specific
 dataframe column.</p>
 <p>Instead of creating an empty list and slowly adding unmatched items
@@ -548,9 +553,9 @@ so they can be reviewed and added to the dictionary later.</p>
     write.table(data.frame(Unmatched = unmatched_vals), 
                 file = output, sep = &quot;\t&quot;, row.names = FALSE, quote = FALSE)
   }</code></pre>
-<ol start="4" style="list-style-type: decimal">
-<li>The Complete Executable Function</li>
-</ol>
+</div>
+<div id="the-complete-executable-function" class="section level2">
+<h2>4. The Complete Executable Function</h2>
 <p>Run the chunk below to load the complete replace_synonyms function
 into your R environment.</p>
 <pre class="r"><code>replace_synonyms &lt;- function(data,
