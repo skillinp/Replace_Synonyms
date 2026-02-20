@@ -1,0 +1,442 @@
+---
+title: "The replace_synonyms Function"
+author: "Paul Skillin"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    theme: readable
+---
+
+## Introduction
+
+This document outlines the `replace_synonyms` function. This tool is designed to standardize messy datasets by referencing a master dictionary (a CSV file). It can operate in two primary ways:
+
+1.  **Synonyms Mode (entry/alias):** It takes a column of messy names, looks them up in a dictionary, and replaces them with the standardized "Entry" or "Alias" name.
+2.  **Metadata Mode:** It takes a column of standardized names, looks them up in a historical key, and appends a new column of metadata (such as species, year, or location) to your dataframe.
+
+---
+
+## 1. Function Setup and Text Normalization
+
+The first part of the function establishes the default behaviors and defines a critical helper function called `normalize_key`. 
+
+When comparing messy data to a dictionary, even a single trailing space or a slight change in capitalization will cause a "no match" error. The `normalize_key` function fixes this by standardizing the text encoding to UTF-8, stripping out invisible control characters, removing extra spaces, and making everything lowercase before it tries to find a match.
+
+```{r Setup, eval=FALSE}
+# NOTE: This chunk is for display only. The complete function is at the bottom.
+
+replace_synonyms <- function(data,
+                             column_name,                 # The column in 'data' you want to check/modify
+                             type = c("entry", "alias", "metadata"), # The mode of operation
+                             synonyms = NULL,             # Optional pre-loaded synonym dataframe
+                             synonyms_path = "./Name Synonym List.csv",
+                             metadata = NULL,             # Optional pre-loaded metadata dataframe
+                             metadata_path = "./NameLocationHistoryKey.csv",
+                             metadata_col = NULL,         # Which column from the metadata file to retrieve
+                             collapse_metadata = NA,      # How to handle multiple matches (NA takes the first match)
+                             mode = NULL,                 # "replace" (overwrite) or "add" (new column)
+                             na.strings = c("NA", "#NA", "#N/A", "", "<NA>", NA),
+                             ignore_case = TRUE,          # Standardize text to lowercase for matching
+                             trim_ws = TRUE,              # Remove leading/trailing spaces for matching
+                             verbose = TRUE,              # Print summary stats to console
+                             output = NULL) {             # Optional file path (e.g. "unmatched.tsv") to save unmatched values
+  type <- match.arg(type)
+  
+  # Set logical defaults based on what the user is trying to do.
+  # If fixing names, we want to REPLACE. If adding info, we want to ADD a column.
+  if (is.null(mode)) {
+    mode <- if (type %in% c("entry", "alias")) "replace" else "add"
+  } else {
+    mode <- match.arg(mode, choices = c("replace", "add"))
+  }
+  
+  # Helper function to aggressively clean and standardize text before matching
+  normalize_key <- function(x) {
+    x <- as.character(x)
+    safe_to_utf8 <- function(s) {
+      out <- iconv(s, from = "", to = "UTF-8", sub = "")
+      na_idx <- is.na(out) & !is.na(s)
+      if (any(na_idx)) {
+        out[na_idx] <- gsub("[[:cntrl:]]", "", s[na_idx]) 
+        out[na_idx] <- iconv(out[na_idx], from = "", to = "UTF-8", sub = "")
+      }
+      out
+    }
+    x <- safe_to_utf8(x)
+    if (trim_ws) x <- trimws(x)
+    if (ignore_case) x <- tolower(x)
+    x
+  }
+```
+
+
+  
+
+2. Building the Dictionary
+
+Before looking at the user's dataframe, the script must build a lookup table (a dictionary) from the provided CSV files.
+
+Speed Optimization: Instead of processing the CSV files cell-by-cell (which can take a very long time for large files), the script uses lapply to apply the normalize_key function to entire columns at once. This reduces the processing time from several seconds down to a fraction of a second.
+
+It also includes an internal check to ensure that one "bad name" does not accidentally point to two completely different "good names".
+
+```{r Building the Dictionary, eval=FALSE}
+# NOTE: This chunk is for display only.
+
+  if (type %in% c("entry", "alias")) {
+    
+    # Load the CSV if not provided in memory
+    if (is.null(synonyms)) {
+      if (!file.exists(synonyms_path)) stop("Synonyms file not found.")
+      synonyms <- read.csv(synonyms_path, na.strings = na.strings,
+                           stringsAsFactors = FALSE, check.names = FALSE)
+    }
+    
+    # Extract the exact replacement values (we do NOT normalize these, so we keep original formatting)
+    targets <- as.character(synonyms[[ if (type == "entry") "Entry" else "Alias" ]])
+    
+    # Normalize the entire dataframe at once for speed
+    synonyms_norm <- as.data.frame(lapply(synonyms, normalize_key), stringsAsFactors = FALSE)
+    
+    # Map every unique messy name in a row to its corresponding target
+    mapping_targets <- list()
+    for (i in seq_len(nrow(synonyms_norm))) {
+      target_val <- targets[i]
+      row_vals <- as.character(unlist(synonyms_norm[i, , drop = TRUE]))
+      row_vals <- row_vals[!is.na(row_vals) & row_vals != ""]
+      if (length(row_vals) == 0) next
+      
+      uniq_vals <- unique(row_vals)
+      for (k in uniq_vals) {
+        mapping_targets[[k]] <- c(mapping_targets[[k]], target_val)
+      }
+    }
+    
+    mapping_targets <- lapply(mapping_targets, unique)
+    
+    # Check for mapping conflicts
+    conflicts <- Filter(function(x) {
+      non_na <- x[!is.na(x) & x != ""]
+      length(unique(non_na)) > 1
+    }, mapping_targets)
+    
+    if (length(conflicts) > 0) stop("Conflicting mappings detected. Fix the CSV.")
+    
+    # Finalize the 1-to-1 dictionary
+    mapping_vec <- vapply(mapping_targets, function(x) {
+      tgt <- x[!is.na(x) & x != ""]
+      if (length(tgt) == 0) NA_character_ else as.character(tgt[1])
+    }, FUN.VALUE = character(1))
+    
+  }
+```
+
+
+
+
+3. Processing the Data and Generating Output
+
+Once the dictionary is built, the script scans the user's specific dataframe column.
+
+Instead of creating an empty list and slowly adding unmatched items to it one by one, the script creates a "logical vector" (a list of TRUE/FALSE values) exactly the size of the dataframe. This is a much more memory-efficient way for R to track which rows did not find a match.
+
+Finally, if the user provided a file path in the output argument, the script will write all the unmatched values to a tab-separated text file so they can be reviewed and added to the dictionary later.
+
+
+```{r Processing the Data, eval=FALSE}
+# NOTE: This chunk is for display only.
+
+  # Pre-allocate tracking vectors
+  orig_vec <- as.character(data[[column_name]])
+  n_total <- length(orig_vec)
+  out_vec <- orig_vec
+  is_unmatched <- logical(n_total) 
+  
+  # Normalize the user's column once, outside the loop
+  norm_keys <- normalize_key(orig_vec)
+  
+  # Match against the dictionary
+  for (i in seq_along(orig_vec)) {
+    v <- orig_vec[i]
+    k <- norm_keys[i]
+    
+    if (k %in% names(mapping_vec)) {
+      out_vec[i] <- mapping_vec[[k]]
+    } else {
+      is_unmatched[i] <- TRUE
+    }
+  }
+  
+  # Write unmatched values to a file if requested
+  unmatched_vals <- unique(orig_vec[is_unmatched])
+  if (!is.null(output) && length(unmatched_vals) > 0) {
+    write.table(data.frame(Unmatched = unmatched_vals), 
+                file = output, sep = "\t", row.names = FALSE, quote = FALSE)
+  }
+```
+
+
+
+4. The Complete Executable Function
+
+Run the chunk below to load the complete replace_synonyms function into your R environment.
+
+
+```{r Complete Fucntion, eval=FALSE}
+replace_synonyms <- function(data,
+                             column_name,                 
+                             type = c("entry", "alias", "metadata"), 
+                             synonyms = NULL,             
+                             synonyms_path = "C:/Users/YOUR_FILEPATH/Name Synonym List.csv",
+                             metadata = NULL,             
+                             metadata_path = "C:/Users/YOUR_FILEPATH/NameLocationHistoryKey.csv",
+                             metadata_col = NULL,         
+                             collapse_metadata = NA,      
+                             mode = NULL,                 
+                             na.strings = c("NA", "#NA", "#N/A", "", "<NA>", NA),
+                             ignore_case = TRUE,          
+                             trim_ws = TRUE,              
+                             verbose = TRUE,              
+                             output = NULL) {             
+  
+  type <- match.arg(type)
+  
+  if (is.null(mode)) {
+    mode <- if (type %in% c("entry", "alias")) "replace" else "add"
+  } else {
+    mode <- match.arg(mode, choices = c("replace", "add"))
+  }
+  
+  normalize_key <- function(x) {
+    x <- as.character(x)
+    safe_to_utf8 <- function(s) {
+      out <- iconv(s, from = "", to = "UTF-8", sub = "")
+      na_idx <- is.na(out) & !is.na(s)
+      if (any(na_idx)) {
+        out[na_idx] <- gsub("[[:cntrl:]]", "", s[na_idx]) 
+        out[na_idx] <- iconv(out[na_idx], from = "", to = "UTF-8", sub = "")
+      }
+      out
+    }
+    x <- safe_to_utf8(x)
+    if (trim_ws) x <- trimws(x)
+    if (ignore_case) x <- tolower(x)
+    x
+  }
+  
+  if (type %in% c("entry", "alias")) {
+    
+    if (is.null(synonyms)) {
+      if (!file.exists(synonyms_path)) stop("Synonyms file not found at: ", synonyms_path)
+      synonyms <- read.csv(synonyms_path, na.strings = na.strings,
+                           stringsAsFactors = FALSE, check.names = FALSE)
+    }
+    if (!all(c("Entry", "Alias") %in% names(synonyms))) {
+      stop("Synonyms data must contain columns named 'Entry' and 'Alias'.")
+    }
+    
+    targets <- as.character(synonyms[[ if (type == "entry") "Entry" else "Alias" ]])
+    synonyms_norm <- as.data.frame(lapply(synonyms, normalize_key), stringsAsFactors = FALSE)
+    
+    mapping_targets <- list()
+    for (i in seq_len(nrow(synonyms_norm))) {
+      target_val <- targets[i]
+      row_vals <- as.character(unlist(synonyms_norm[i, , drop = TRUE]))
+      row_vals <- row_vals[!is.na(row_vals) & row_vals != ""]
+      if (length(row_vals) == 0) next
+      
+      uniq_vals <- unique(row_vals)
+      for (k in uniq_vals) {
+        mapping_targets[[k]] <- c(mapping_targets[[k]], target_val)
+      }
+    }
+    mapping_targets <- lapply(mapping_targets, unique)
+    
+    conflicts <- Filter(function(x) {
+      non_na <- x[!is.na(x) & x != ""]
+      length(unique(non_na)) > 1
+    }, mapping_targets)
+    
+    if (length(conflicts) > 0) {
+      msg_lines <- vapply(names(conflicts), function(k) {
+        paste0("'", k, "': ", paste0(unique(conflicts[[k]]), collapse = " | "))
+      }, FUN.VALUE = "")
+      stop("Conflicting mappings detected for the chosen type ('", type, "').\n",
+           "Each of the following keys appears in multiple rows but maps to different targets:\n",
+           paste(msg_lines, collapse = "\n"),
+           "\n\nFix the synonyms CSV so each key maps to a unique target.")
+    }
+    
+    mapping_vec <- vapply(mapping_targets, function(x) {
+      tgt <- x[!is.na(x) & x != ""]
+      if (length(tgt) == 0) NA_character_ else as.character(tgt[1])
+    }, FUN.VALUE = character(1))
+    
+  } else {
+    
+    if (is.null(metadata)) {
+      if (!file.exists(metadata_path)) stop("Metadata file not found at: ", metadata_path)
+      metadata <- read.csv(metadata_path, na.strings = na.strings,
+                           stringsAsFactors = FALSE, check.names = FALSE)
+    }
+    if (is.null(metadata_col) || !(metadata_col %in% names(metadata))) {
+      stop("For type = 'metadata' you must supply a valid metadata_col that exists in the metadata file.")
+    }
+    
+    targets <- as.character(metadata[[metadata_col]])
+    metadata_norm <- as.data.frame(lapply(metadata, normalize_key), stringsAsFactors = FALSE)
+    
+    mapping_metadata <- list()
+    for (i in seq_len(nrow(metadata_norm))) {
+      target_val <- targets[i]
+      row_vals <- as.character(unlist(metadata_norm[i, , drop = TRUE]))
+      row_vals <- row_vals[!is.na(row_vals) & row_vals != ""]
+      if (length(row_vals) == 0) next
+      
+      uniq_vals <- unique(row_vals)
+      for (k in uniq_vals) {
+        mapping_metadata[[k]] <- c(mapping_metadata[[k]], target_val)
+      }
+    }
+    mapping_metadata <- lapply(mapping_metadata, unique)
+  }
+  
+  if (!column_name %in% names(data)) stop("Column '", column_name, "' not found in data.")
+  
+  orig_vec <- as.character(data[[column_name]])
+  n_total <- length(orig_vec)
+  
+  is_blank_input <- is.na(orig_vec) | (trim_ws & trimws(orig_vec) == "")
+  n_na_input <- sum(is_blank_input)
+  n_candidates <- n_total - n_na_input
+  
+  out_vec <- orig_vec
+  is_unmatched <- logical(n_total) 
+  
+  replaced_to_na <- 0
+  replaced_count <- 0
+  added_count <- 0
+  kept_already_correct <- 0
+  kept_no_match <- 0
+  
+  norm_keys <- normalize_key(orig_vec)
+  
+  if (type %in% c("entry", "alias")) {
+    
+    for (i in seq_along(orig_vec)) {
+      v <- orig_vec[i]
+      
+      if (is_blank_input[i]) {
+        out_vec[i] <- NA
+        next
+      }
+      
+      k <- norm_keys[i]
+      
+      if (k %in% names(mapping_vec)) {
+        replacement <- mapping_vec[[k]]
+        
+        if (!is.na(replacement) && v == replacement) {
+          kept_already_correct <- kept_already_correct + 1
+          next 
+        }
+        
+        if (is.na(replacement) || replacement == "") {
+          out_vec[i] <- NA
+          replaced_to_na <- replaced_to_na + 1
+        } else {
+          out_vec[i] <- replacement
+        }
+        replaced_count <- replaced_count + 1
+        
+      } else {
+        is_unmatched[i] <- TRUE
+        kept_no_match <- kept_no_match + 1
+      }
+    }
+    
+    data[[column_name]] <- out_vec
+    
+  } else { 
+    
+    new_col_name <- if (mode == "add") metadata_col else column_name
+    
+    if (mode == "add" && new_col_name %in% names(data)) {
+      warning("New column name '", new_col_name, "' already exists. It will be overwritten.")
+    }
+    
+    out_vec_new <- rep(NA_character_, n_total)
+    
+    for (i in seq_along(orig_vec)) {
+      v <- orig_vec[i]
+      if (is_blank_input[i]) {
+        out_vec_new[i] <- NA
+        next
+      }
+      
+      k <- norm_keys[i]
+      
+      if (k %in% names(mapping_metadata)) {
+        vals <- mapping_metadata[[k]]
+        vals <- vals[!is.na(vals) & vals != ""]
+        
+        if (length(vals) == 0) {
+          out_vec_new[i] <- NA
+          replaced_to_na <- replaced_to_na + 1
+        } else {
+          if (is.na(collapse_metadata)) {
+            out_vec_new[i] <- as.character(vals[1]) 
+          } else {
+            out_vec_new[i] <- paste(vals, collapse = collapse_metadata) 
+          }
+        }
+        added_count <- added_count + 1
+        
+      } else {
+        is_unmatched[i] <- TRUE
+        kept_no_match <- kept_no_match + 1
+      }
+    }
+    
+    data[[new_col_name]] <- out_vec_new
+  }
+  
+  unmatched_vals <- unique(orig_vec[is_unmatched])
+  n_unmatched <- length(unmatched_vals)
+  
+  if (verbose) {
+    cat(sprintf("Processed %d total values (%d non-blank candidates).\n", n_total, n_candidates))
+    if (type %in% c("entry", "alias")) {
+      cat(sprintf("Synonyms mode ('%s'): Replaced: %d. Kept (already correct): %d. Kept (no match found): %d. Replaced -> NA (target blank): %d.\n",
+                  type, replaced_count, kept_already_correct, kept_no_match, replaced_to_na))
+    } else {
+      cat(sprintf("Metadata mode: %s using metadata column '%s'. Added/populated: %d. Kept (no match found): %d. Added -> NA (target blank): %d.\n",
+                  ifelse(mode == "add", "Added", "Replaced"), metadata_col,
+                  added_count, kept_no_match, replaced_to_na))
+    }
+    
+    if (n_unmatched > 0) {
+      cat(sprintf("Unmatched values (unique, showing up to 5 of %d):\n", n_unmatched))
+      print(head(unmatched_vals, 5))
+    }
+  }
+  
+  if (!is.null(output) && n_unmatched > 0) {
+    write.table(data.frame(Unmatched = unmatched_vals), 
+                file = output, 
+                sep = "\t", 
+                row.names = FALSE, 
+                quote = FALSE)
+    if (verbose) cat(sprintf("\nSaved %d unmatched values to: %s\n", n_unmatched, output))
+  }
+  
+  attr(data, "unmatched_values") <- unmatched_vals
+  
+  return(data)
+}
+```
+
+
+
